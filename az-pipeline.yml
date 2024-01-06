@@ -1,0 +1,84 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+steps:
+- task: WhiteHatSentinelSource@1
+  displayName: 'WhiteHat Sentinel Source (SAST)'
+  inputs:
+    scanType: 'sast'
+    scanName: 'Java SAST'
+    scanDescription: 'Java SAST scan'
+    scanLanguage: 'java'
+    scanSourceLocation: '$(Build.SourcesDirectory)'
+    scanOutputLocation: '$(Build.ArtifactStagingDirectory)/whsast'
+    scanOutputFormat: 'sarif'
+    scanOutputName: 'whsast'
+    scanOutputVersion: '1.0.0'
+
+- task: SonarCloudPrepare@1
+  displayName: 'Prepare analysis on SonarCloud'
+  inputs:
+    SonarCloud: 'SonarCloud'
+    organization: '<your organization>'
+    scannerMode: 'CLI'
+    configMode: 'manual'
+    cliProjectKey: '<your project key>'
+    cliProjectName: '<your project name>'
+    cliSources: 'src'
+    extraProperties: |
+      sonar.java.binaries=$(Build.SourcesDirectory)/target
+      sonar.java.libraries=$(Build.SourcesDirectory)/lib
+
+- task: Maven@3
+  displayName: 'Maven build'
+  inputs:
+    mavenPomFile: 'pom.xml'
+    mavenOptions: '-Xmx3072m'
+    javaHomeOption: 'JDKVersion'
+    jdkVersionOption: '1.8'
+    publishJUnitResults: true
+    testResultsFiles: '**/surefire-reports/TEST-*.xml'
+    goals: 'package'
+
+- task: SonarCloudAnalyze@1
+  displayName: 'Run Code Analysis'
+  inputs:
+    SonarCloud: 'SonarCloud'
+
+- task: SonarCloudPublish@1
+  displayName: 'Publish Quality Gate Result'
+  inputs:
+    SonarCloud: 'SonarCloud'
+
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish Artifact: drop'
+  inputs:
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)/drop'
+    ArtifactName: 'drop'
+    publishLocation: 'Container'
+
+- task: Approval@2
+  displayName: 'Approval: Deploy to AKS prod'
+  inputs:
+    notifyUsers: |
+      user1@example.com
+      user2@example.com
+    instructions: 'Please review and approve the deployment to AKS prod.'
+    approvers: |
+      user1@example.com
+      user2@example.com
+    minimumApprovers: 1
+    timeoutInMinutes: 1440
+
+- task: AzureCLI@2
+  displayName: 'Deploy to AKS prod'
+  inputs:
+    azureSubscription: '<your subscription>'
+    scriptType: 'bash'
+    scriptLocation: 'inlineScript'
+    inlineScript: |
+      az aks get-credentials --resource-group <your resource group> --name <your AKS cluster name>
+      kubectl apply -f $(System.DefaultWorkingDirectory)/<your project name>/k8s/prod.yaml
